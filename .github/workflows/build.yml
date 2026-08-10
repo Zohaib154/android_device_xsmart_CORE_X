@@ -1,11 +1,21 @@
-name: Build TWRP Recovery
+name: Build Custom Recovery
 
 on:
   workflow_dispatch:
+    inputs:
+      recovery_type:
+        description: 'Select Recovery Project'
+        required: true
+        default: 'TWRP'
+        type: choice
+        options:
+        - TWRP
+        - OrangeFox
+        - PitchBlack
 
 jobs:
   build:
-    name: Build TWRP Recovery
+    name: Build ${{ github.event.inputs.recovery_type }} Recovery
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -35,33 +45,62 @@ jobs:
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
 
-    - name: Initialize TWRP Workspace & Sync
+    - name: Initialize Workspace & Sync Manifest
       run: |
-        mkdir twrp
-        cd twrp
+        mkdir work
+        cd work
         git config --global user.name "Zohaib154"
         git config --global user.email "zohaib154@github.com"
-        repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
+        
+        RECOVERY="${{ github.event.inputs.recovery_type }}"
+        
+        if [ "$RECOVERY" = "TWRP" ]; then
+          MANIFEST_URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git"
+          BRANCH="twrp-12.1"
+        elif [ "$RECOVERY" = "OrangeFox" ]; then
+          MANIFEST_URL="https://gitlab.com/OrangeFox/Manifest.git"
+          BRANCH="fox_12.1"
+        elif [ "$RECOVERY" = "PitchBlack" ]; then
+          MANIFEST_URL="https://github.com/PitchBlackRecoveryProject/manifest_pb.git"
+          BRANCH="android-12.1"
+        fi
+        
+        echo "Syncing $RECOVERY manifest from $MANIFEST_URL (branch: $BRANCH)..."
+        repo init --depth=1 -u $MANIFEST_URL -b $BRANCH
         repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
 
     - name: Clone Device Tree
       run: |
-        cd twrp
+        cd work
         git clone https://github.com/Zohaib154/android_device_xsmart_CORE_X.git device/xsmart/CORE_X
 
-    - name: Build TWRP Image
+    - name: Build Recovery Image
       run: |
-        cd twrp
+        cd work
         source build/envsetup.sh
-        lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
-        make clean
-        make bootimage -j$(nproc --all) || make recoveryimage -j$(nproc --all)
+        
+        RECOVERY="${{ github.event.inputs.recovery_type }}"
+        
+        if [ "$RECOVERY" = "OrangeFox" ]; then
+          lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
+          make clean
+          mka bootimage -j$(nproc --all) || mka recoveryimage -j$(nproc --all)
+        else
+          lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
+          make clean
+          make bootimage -j$(nproc --all) || make recoveryimage -j$(nproc --all)
+        fi
+
+    - name: Locate Built Images
+      run: |
+        echo "=== Locating compiled output images ==="
+        find work/out/ -type f \( -name "*.img" -o -name "*.zip" \)
 
     - name: Upload Recovery Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: TWRP_Recovery_CORE_X
+        name: ${{ github.event.inputs.recovery_type }}_Recovery_CORE_X
         path: |
-          twrp/out/target/product/*/*.img
-          twrp/out/target/product/*/*.zip
+          work/out/**/*.img
+          work/out/**/*.zip
         if-no-files-found: error

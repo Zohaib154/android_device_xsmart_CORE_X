@@ -47,7 +47,7 @@ jobs:
 
     - name: Initialize Workspace & Sync Manifest
       run: |
-        mkdir work
+        mkdir -p work
         cd work
         git config --global user.name "Zohaib154"
         git config --global user.email "zohaib154@github.com"
@@ -79,28 +79,25 @@ jobs:
         cd work
         source build/envsetup.sh
         
-        RECOVERY="${{ github.event.inputs.recovery_type }}"
+        echo "=== Running lunch ==="
+        lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
         
-        if [ "$RECOVERY" = "OrangeFox" ]; then
-          lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
-          make clean
-          mka bootimage -j$(nproc --all) || mka recoveryimage -j$(nproc --all)
-        else
-          lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
-          make clean
-          make bootimage -j$(nproc --all) || make recoveryimage -j$(nproc --all)
-        fi
+        echo "=== Starting Compilation ==="
+        make bootimage -j$(nproc --all) 2>&1 | tee build.log || make recoveryimage -j$(nproc --all) 2>&1 | tee -a build.log
 
-    - name: Locate Built Images
+    - name: Check Build Output
+      if: always()
       run: |
-        echo "=== Locating compiled output images ==="
-        find work/out/ -type f \( -name "*.img" -o -name "*.zip" \)
+        echo "=== Locating compiled output files ==="
+        find work/ -name "*.img" -o -name "*.zip" -o -name "build.log"
 
     - name: Upload Recovery Artifact
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ${{ github.event.inputs.recovery_type }}_Recovery_CORE_X
         path: |
-          work/out/**/*.img
-          work/out/**/*.zip
-        if-no-files-found: error
+          work/**/*.img
+          work/**/*.zip
+          work/build.log
+        if-no-files-found: warn

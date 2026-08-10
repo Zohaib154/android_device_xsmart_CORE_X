@@ -51,7 +51,7 @@ jobs:
         mka recoveryimage -j$(nproc --all)
 
     - name: Upload Recovery Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: TWRP-CORE_X
         path: twrp/out/target/product/CORE_X/recovery.img

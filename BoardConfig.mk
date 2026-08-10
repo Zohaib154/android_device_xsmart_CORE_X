@@ -1,3 +1,41 @@
+#
+# Copyright (C) 2026 The Android Open Source Project
+#
+
+DEVICE_PATH := device/xsmart/CORE_X
+
+# For building with minimal manifest
+ALLOW_MISSING_DEPENDENCIES := true
+
+# Architecture (MUST BE AT TOP LEVEL)
+TARGET_ARCH := arm64
+TARGET_ARCH_VARIANT := armv8-a
+TARGET_CPU_ABI := arm64-v8a
+TARGET_CPU_ABI2 := 
+TARGET_CPU_VARIANT := generic
+TARGET_CPU_VARIANT_RUNTIME := cortex-a53
+
+TARGET_2ND_ARCH := arm
+TARGET_2ND_ARCH_VARIANT := armv7-a-neon
+TARGET_2ND_CPU_ABI := armeabi-v7a
+TARGET_2ND_CPU_ABI2 := armeabi
+TARGET_2ND_CPU_VARIANT := generic
+TARGET_2ND_CPU_VARIANT_RUNTIME := cortex-a53
+
+# A/B Partition Layout
+AB_OTA_UPDATER := true
+AB_OTA_PARTITIONS += \
+    vendor \
+    boot \
+    product \
+    system \
+    vbmeta_system \
+    vbmeta_vendor
+BOARD_USES_RECOVERY_AS_BOOT := true
+
+# APEX
+OVERRIDE_TARGET_FLATTEN_APEX := true
+
 # Bootloader
 TARGET_BOOTLOADER_BOARD_NAME := k62v1_64_bsp
 TARGET_NO_BOOTLOADER := true
@@ -30,7 +68,7 @@ BOARD_INCLUDE_DTB_IN_BOOTIMG := true
 endif
 
 # Partitions
-BOARD_FLASH_BLOCK_SIZE := 131072 # (BOARD_KERNEL_PAGESIZE * 64)
+BOARD_FLASH_BLOCK_SIZE := 131072
 BOARD_BOOTIMAGE_PARTITION_SIZE := 33554432
 BOARD_RECOVERYIMAGE_PARTITION_SIZE := 33554432
 BOARD_HAS_LARGE_FILESYSTEM := true
@@ -65,7 +103,7 @@ TW_EXTRA_LANGUAGES := true
 TW_SCREEN_BLANK_ON_BOOT := true
 TW_INPUT_BLACKLIST := "hbtp_vm"
 
-# Screen Brightness (MT6765 Standard)
+# Screen Brightness
 TW_MAX_BRIGHTNESS := 255
 TW_DEFAULT_BRIGHTNESS := 150
 

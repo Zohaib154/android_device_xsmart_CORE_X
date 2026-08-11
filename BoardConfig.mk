@@ -116,3 +116,10 @@ TARGET_USE_CUSTOM_LUN_FILE_PATH := "/config/usb_gadget/g1/functions/mass_storage
 
 # Fastbootd / USB Properties
 BOARD_ROOT_EXTRA_FOLDERS := /vendor /product /system
+
+# Ramdisk Compression & Size Reduction
+BOARD_RAMDISK_USE_LZMA := true
+LZMA_RAMDISK_TARGETS := recovery boot
+TW_EXTRA_LANGUAGES := false
+TW_INCLUDE_REPACKTOOLS := false
+TW_EXCLUDE_PYTHON := true

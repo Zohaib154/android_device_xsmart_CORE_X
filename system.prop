@@ -1,0 +1,45 @@
+#
+# Copyright (C) 2024 The Android Open Source Project
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# System properties for xsmart CORE_X (mt6765)
+#
+
+# ADB
+ro.adb.secure=0
+ro.debuggable=1
+
+# USB — single definition; mtp,adb is the desired recovery state
+persist.sys.usb.config=mtp,adb
+
+# Platform
+ro.board.platform=mt6765
+ro.hardware=mt6765
+
+# Security patch - spoof for decrypt compatibility
+ro.vendor.build.security_patch=2099-12-31
+ro.build.version.security_patch=2099-12-31
+
+# Media codecs
+media.stagefright.enable-player=true
+media.stagefright.enable-http=true
+media.stagefright.enable-aac=true
+media.stagefright.enable-qcp=true
+media.stagefright.enable-record=false
+
+# USB controller
+sys.usb.configfs=1
+sys.usb.controller=musb-hdrc
+
+# Crypto
+ro.crypto.type=file
+ro.crypto.state=encrypted
+ro.crypto.volume.filenames_mode=aes-256-cts
+
+# MTK specific
+ro.vendor.mtk_ufs_support=0
+ro.vendor.mtk.pl_lnk=0
+
+# StorageManager
+ro.storage_manager.enabled=true

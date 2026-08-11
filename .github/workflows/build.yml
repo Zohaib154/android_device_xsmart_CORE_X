@@ -1,107 +1,185 @@
-name: Build Custom Recovery
+name: Build TWRP for xsmart CORE_X
 
 on:
   workflow_dispatch:
     inputs:
-      recovery_type:
-        description: 'Select Recovery Project'
+      MANIFEST_BRANCH:
+        description: 'TWRP Manifest Branch'
         required: true
-        default: 'TWRP'
+        default: 'twrp-12.1'
         type: choice
         options:
-        - TWRP
-        - OrangeFox
-        - PitchBlack
+          - twrp-12.1
+          - twrp-11
+      BUILD_TARGET:
+        description: 'Build Target (bootimage for A/B devices)'
+        required: true
+        default: 'bootimage'
+        type: choice
+        options:
+          - bootimage
+          - recoveryimage
+      UPLOAD_RELEASE:
+        description: 'Upload as GitHub Release'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   build:
-    name: Build ${{ github.event.inputs.recovery_type }} Recovery
+    name: Build TWRP for CORE_X
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
+    env:
+      DEVICE_PATH: device/xsmart/CORE_X
+      DEVICE_NAME: CORE_X
+      DEVICE_BRAND: xsmart
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout device tree
+        uses: actions/checkout@v4
 
-    - name: Clean Up Disk Space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo apt-get clean
-        df -h
+      - name: Free Disk Space
+        run: |
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-chrome-stable \
+            firefox powershell mono-devel libgl1-mesa-dri || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h
 
-    - name: Install Build Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32z1-dev libc6-dev-i386 libgl1-mesa-dev libxml2-utils xsltproc zlib1g-dev python3 python3-pip python-is-python3
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf imagemagick \
+            lib32ncurses5-dev lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libncurses5 libncurses5-dev \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+            lzop pngcrush rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev python3 python3-pip \
+            openjdk-11-jdk
 
-    - name: Install Repo Tool
-      run: |
-        mkdir -p ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        sudo ln -sf ~/bin/repo /usr/bin/repo
+      - name: Set up ccache
+        run: |
+          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          ccache -M 5G
 
-    - name: Initialize Workspace & Sync Manifest
-      run: |
-        mkdir -p work
-        cd work
-        git config --global user.name "Zohaib154"
-        git config --global user.email "zohaib154@github.com"
-        
-        RECOVERY="${{ github.event.inputs.recovery_type }}"
-        
-        if [ "$RECOVERY" = "TWRP" ]; then
-          MANIFEST_URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git"
-          BRANCH="twrp-12.1"
-        elif [ "$RECOVERY" = "OrangeFox" ]; then
-          MANIFEST_URL="https://gitlab.com/OrangeFox/Manifest.git"
-          BRANCH="fox_12.1"
-        elif [ "$RECOVERY" = "PitchBlack" ]; then
-          MANIFEST_URL="https://github.com/PitchBlackRecoveryProject/manifest_pb.git"
-          BRANCH="android-12.1"
-        fi
-        
-        echo "Syncing $RECOVERY manifest from $MANIFEST_URL (branch: $BRANCH)..."
-        repo init --depth=1 -u $MANIFEST_URL -b $BRANCH
-        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+      - name: Install repo tool
+        run: |
+          mkdir -p ~/bin
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
 
-    - name: Clone Device Tree
-      run: |
-        cd work
-        git clone https://github.com/Zohaib154/android_device_xsmart_CORE_X.git device/xsmart/CORE_X
+      - name: Configure git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git config --global color.ui false
 
-    - name: Build Recovery Image
-      run: |
-        cd work
-        source build/envsetup.sh
-        
-        # Ensure process exits with failure status if build fails
-        set -o pipefail
-        
-        echo "=== Running lunch ==="
-        lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
-        
-        echo "=== Starting Compilation ==="
-        make bootimage -j$(nproc --all) 2>&1 | tee build.log || make recoveryimage -j$(nproc --all) 2>&1 | tee -a build.log
+      - name: Initialize repo and sync TWRP source
+        run: |
+          mkdir -p twrp
+          cd twrp
+          repo init \
+            --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+          repo sync -c -j$(nproc --all) \
+            --force-sync \
+            --no-clone-bundle \
+            --no-tags \
+            2>&1 | tee repo_sync.log
+          echo "Repo sync completed"
 
-    - name: Locate Built Images
-      if: always()
-      run: |
-        echo "=== Locating compiled output images ==="
-        find work/out/target/product/CORE_X/ -name "*.img" -o -name "*.zip" || true
+      - name: Clone device tree into source
+        run: |
+          rm -rf twrp/${{ env.DEVICE_PATH }}
+          cp -r . twrp/${{ env.DEVICE_PATH }}
+          # Remove git metadata to avoid conflicts
+          rm -rf twrp/${{ env.DEVICE_PATH }}/.git
+          rm -rf twrp/${{ env.DEVICE_PATH }}/.github
+          echo "Device tree placed at twrp/${{ env.DEVICE_PATH }}"
+          ls twrp/${{ env.DEVICE_PATH }}
 
-    - name: Upload Recovery Artifact
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ github.event.inputs.recovery_type }}_CORE_X
-        path: |
-          work/out/target/product/CORE_X/boot.img
-          work/out/target/product/CORE_X/recovery.img
-          work/out/target/product/CORE_X/*.zip
-          work/build.log
-        if-no-files-found: warn
+      - name: Build TWRP recovery image
+        run: |
+          cd twrp
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          source build/envsetup.sh
+          lunch omni_${{ env.DEVICE_NAME }}-eng
+          mka ${{ github.event.inputs.BUILD_TARGET }} -j$(nproc --all) 2>&1 | tee build.log
+          echo "Build completed"
+
+      - name: Check build output
+        run: |
+          cd twrp
+          OUT_DIR="out/target/product/${{ env.DEVICE_NAME }}"
+          echo "=== Build output files ==="
+          ls -lh "$OUT_DIR"/*.img 2>/dev/null || echo "No .img files found"
+          # For A/B device, boot.img contains recovery ramdisk
+          if [ -f "$OUT_DIR/boot.img" ]; then
+            echo "boot.img size: $(du -sh $OUT_DIR/boot.img)"
+          fi
+          if [ -f "$OUT_DIR/recovery.img" ]; then
+            echo "recovery.img size: $(du -sh $OUT_DIR/recovery.img)"
+          fi
+
+      - name: Upload boot.img (A/B primary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-${{ env.DEVICE_NAME }}-boot-${{ github.run_number }}
+          path: twrp/out/target/product/${{ env.DEVICE_NAME }}/boot.img
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload recovery.img (fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-${{ env.DEVICE_NAME }}-recovery-${{ github.run_number }}
+          path: twrp/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            twrp/build.log
+            twrp/repo_sync.log
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Create GitHub Release
+        if: ${{ github.event.inputs.UPLOAD_RELEASE == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: TWRP-${{ env.DEVICE_NAME }}-${{ github.run_number }}
+          name: TWRP for xsmart CORE_X (Build ${{ github.run_number }})
+          body: |
+            ## TWRP Recovery for xsmart CORE_X
+
+            - **Device:** xsmart CORE_X (mt6765)
+            - **Branch:** ${{ github.event.inputs.MANIFEST_BRANCH }}
+            - **Build:** #${{ github.run_number }}
+            - **Type:** A/B device — flash `boot.img` to both boot slots
+
+            ### Flashing Instructions
+            ```
+            fastboot flash boot_a boot.img
+            fastboot flash boot_b boot.img
+            fastboot reboot
+            ```
+          files: |
+            twrp/out/target/product/${{ env.DEVICE_NAME }}/boot.img
+            twrp/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

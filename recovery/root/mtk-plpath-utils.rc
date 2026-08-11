@@ -7,11 +7,11 @@ on property:persist.vendor.mtk.pl_lnk=1
     symlink /dev/block/mapper/pl_a /dev/block/platform/bootdevice/by-name/preloader_raw_a
     symlink /dev/block/mapper/pl_b /dev/block/platform/bootdevice/by-name/preloader_raw_b
 
-# FSTAB_RAW2(lk2,bootloader2) of fstab.in.emmc, but without bootloader2 mount point
-    symlink /dev/block/by-name/lk1 /dev/block/by-name/bootloader1
+# Align with recovery.fstab: /bootloader -> lk, /bootloader2 -> lk2
+    symlink /dev/block/by-name/lk  /dev/block/by-name/bootloader
     symlink /dev/block/by-name/lk2 /dev/block/by-name/bootloader2
 
-# Fix ro.vendor.mtk_ufs_support remove issue of recovery mode
+# Fix ro.vendor.mtk_ufs_support remove issue in recovery mode
 on property:vendor.mtk.boot0_linka=1
     symlink /dev/block/sda /dev/block/mmcblk0boot0
 

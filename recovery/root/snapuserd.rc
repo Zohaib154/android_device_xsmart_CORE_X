@@ -1,7 +1,15 @@
 service snapuserd /system/bin/snapuserd
+    class main
+    user root
+    group root system
     socket snapuserd stream 0660 system system
     oneshot
     disabled
-    user root
-    group root system
     seclabel u:r:snapuserd:s0
+
+# ro.virtual_ab.enabled is the correct read-only property set by the build system
+on property:ro.virtual_ab.enabled=true
+    start snapuserd
+
+on property:snapuserd.ready=true
+    setprop snapuserd.status ready

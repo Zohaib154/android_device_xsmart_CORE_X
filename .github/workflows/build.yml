@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       MANIFEST_BRANCH:
-        description: 'TWRP Manifest Branch'
+        description: 'TWRP Manifest branch'
         required: true
         default: 'twrp-12.1'
         type: choice
@@ -12,7 +12,7 @@ on:
           - twrp-12.1
           - twrp-11
       BUILD_TARGET:
-        description: 'Build Target (bootimage for A/B devices)'
+        description: 'Build target (bootimage for A/B devices)'
         required: true
         default: 'bootimage'
         type: choice
@@ -20,7 +20,7 @@ on:
           - bootimage
           - recoveryimage
       UPLOAD_RELEASE:
-        description: 'Upload as GitHub Release'
+        description: 'Create a GitHub Release after build'
         required: false
         default: 'false'
         type: boolean
@@ -30,43 +30,65 @@ jobs:
     name: Build TWRP for CORE_X
     runs-on: ubuntu-22.04
     env:
-      DEVICE_PATH: device/xsmart/CORE_X
       DEVICE_NAME: CORE_X
       DEVICE_BRAND: xsmart
+      DEVICE_PATH: device/xsmart/CORE_X
+      TWRP_DIR: ${{ github.workspace }}/twrp
 
     steps:
+      # ------------------------------------------------------------------ #
+      # 1. Checkout the device tree into a temporary location               #
+      # ------------------------------------------------------------------ #
       - name: Checkout device tree
         uses: actions/checkout@v4
+        with:
+          path: device-tree
 
-      - name: Free Disk Space
+      # ------------------------------------------------------------------ #
+      # 2. Free disk space – GitHub runners ship with ~25 GB free           #
+      # ------------------------------------------------------------------ #
+      - name: Free disk space
         run: |
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-chrome-stable \
-            firefox powershell mono-devel libgl1-mesa-dri || true
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost \
+            "$AGENT_TOOLSDIRECTORY" || true
           sudo docker image prune --all --force || true
           df -h
 
+      # ------------------------------------------------------------------ #
+      # 3. Install build dependencies                                       #
+      # ------------------------------------------------------------------ #
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git gnupg gperf imagemagick \
+            g++-multilib gcc-multilib git gnupg gperf \
             lib32ncurses5-dev lib32readline-dev lib32z1-dev \
             libelf-dev liblz4-tool libncurses5 libncurses5-dev \
-            libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
-            lzop pngcrush rsync schedtool squashfs-tools \
-            xsltproc zip zlib1g-dev python3 python3-pip \
-            openjdk-11-jdk
+            libssl-dev libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python3-pip openjdk-11-jdk imagemagick
 
+      # ------------------------------------------------------------------ #
+      # 4. Configure ccache                                                 #
+      # ------------------------------------------------------------------ #
       - name: Set up ccache
         run: |
-          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
           ccache -M 5G
+          ccache -o compression=true
+          echo "USE_CCACHE=1"           >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=true"   >> $GITHUB_ENV
+          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=5G"      >> $GITHUB_ENV
 
+      # ------------------------------------------------------------------ #
+      # 5. Install the repo launcher                                        #
+      # ------------------------------------------------------------------ #
       - name: Install repo tool
         run: |
           mkdir -p ~/bin
@@ -74,111 +96,137 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
+      # ------------------------------------------------------------------ #
+      # 6. Configure git (required by repo before init)                    #
+      # ------------------------------------------------------------------ #
       - name: Configure git
         run: |
-          git config --global user.name "GitHub Actions"
+          git config --global user.name  "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git config --global color.ui false
+          git config --global color.ui   false
 
-      - name: Initialize repo and sync TWRP source
+      # ------------------------------------------------------------------ #
+      # 7. Sync TWRP source                                                 #
+      # ------------------------------------------------------------------ #
+      - name: Initialize and sync TWRP source
         run: |
-          mkdir -p twrp
-          cd twrp
+          mkdir -p "$TWRP_DIR"
+          cd "$TWRP_DIR"
           repo init \
             --depth=1 \
             -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-          repo sync -c -j$(nproc --all) \
+          repo sync \
+            -c \
+            -j$(nproc --all) \
             --force-sync \
             --no-clone-bundle \
-            --no-tags \
-            2>&1 | tee repo_sync.log
-          echo "Repo sync completed"
+            --no-tags
+          echo "Repo sync finished"
 
-      - name: Clone device tree into source
+      # ------------------------------------------------------------------ #
+      # 8. Place the device tree inside the synced source tree              #
+      #    mkdir -p creates the full path before the copy happens           #
+      # ------------------------------------------------------------------ #
+      - name: Copy device tree into source
         run: |
-          rm -rf twrp/${{ env.DEVICE_PATH }}
-          cp -r . twrp/${{ env.DEVICE_PATH }}
-          # Remove git metadata to avoid conflicts
-          rm -rf twrp/${{ env.DEVICE_PATH }}/.git
-          rm -rf twrp/${{ env.DEVICE_PATH }}/.github
-          echo "Device tree placed at twrp/${{ env.DEVICE_PATH }}"
-          ls twrp/${{ env.DEVICE_PATH }}
+          TARGET="$TWRP_DIR/$DEVICE_PATH"
+          mkdir -p "$TARGET"
+          # rsync is safer than cp -r for this kind of directory copy
+          rsync -a --exclude='.git' --exclude='.github' \
+            "${{ github.workspace }}/device-tree/" \
+            "$TARGET/"
+          echo "Device tree placed at: $TARGET"
+          ls -la "$TARGET"
 
-      - name: Build TWRP recovery image
+      # ------------------------------------------------------------------ #
+      # 9. Build                                                            #
+      # ------------------------------------------------------------------ #
+      - name: Build TWRP
         run: |
-          cd twrp
+          cd "$TWRP_DIR"
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           source build/envsetup.sh
-          lunch omni_${{ env.DEVICE_NAME }}-eng
+          lunch omni_${DEVICE_NAME}-eng
           mka ${{ github.event.inputs.BUILD_TARGET }} -j$(nproc --all) 2>&1 | tee build.log
-          echo "Build completed"
+          echo "Build finished"
 
-      - name: Check build output
+      # ------------------------------------------------------------------ #
+      # 10. Sanity-check the output                                         #
+      # ------------------------------------------------------------------ #
+      - name: Check output images
         run: |
-          cd twrp
-          OUT_DIR="out/target/product/${{ env.DEVICE_NAME }}"
-          echo "=== Build output files ==="
-          ls -lh "$OUT_DIR"/*.img 2>/dev/null || echo "No .img files found"
-          # For A/B device, boot.img contains recovery ramdisk
-          if [ -f "$OUT_DIR/boot.img" ]; then
-            echo "boot.img size: $(du -sh $OUT_DIR/boot.img)"
-          fi
-          if [ -f "$OUT_DIR/recovery.img" ]; then
-            echo "recovery.img size: $(du -sh $OUT_DIR/recovery.img)"
-          fi
+          OUT="$TWRP_DIR/out/target/product/$DEVICE_NAME"
+          echo "=== Images in output directory ==="
+          ls -lh "$OUT"/*.img 2>/dev/null || echo "WARNING: no .img files found"
+          for img in boot.img recovery.img; do
+            [ -f "$OUT/$img" ] && echo "$img: $(du -sh $OUT/$img | cut -f1)" || true
+          done
 
-      - name: Upload boot.img (A/B primary)
+      # ------------------------------------------------------------------ #
+      # 11. Upload boot.img (A/B devices use boot partition for recovery)  #
+      # ------------------------------------------------------------------ #
+      - name: Upload boot.img
         uses: actions/upload-artifact@v4
         with:
           name: TWRP-${{ env.DEVICE_NAME }}-boot-${{ github.run_number }}
-          path: twrp/out/target/product/${{ env.DEVICE_NAME }}/boot.img
+          path: ${{ env.TWRP_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/boot.img
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload recovery.img (fallback)
+      # ------------------------------------------------------------------ #
+      # 12. Upload recovery.img (present when building recoveryimage)      #
+      # ------------------------------------------------------------------ #
+      - name: Upload recovery.img
         uses: actions/upload-artifact@v4
         with:
           name: TWRP-${{ env.DEVICE_NAME }}-recovery-${{ github.run_number }}
-          path: twrp/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
+          path: ${{ env.TWRP_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload build log on failure
+      # ------------------------------------------------------------------ #
+      # 13. Upload logs on failure for debugging                            #
+      # ------------------------------------------------------------------ #
+      - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ github.run_number }}
-          path: |
-            twrp/build.log
-            twrp/repo_sync.log
+          name: build-logs-${{ github.run_number }}
+          path: ${{ env.TWRP_DIR }}/build.log
           if-no-files-found: ignore
           retention-days: 3
 
+      # ------------------------------------------------------------------ #
+      # 14. Optional: create a GitHub Release                               #
+      # ------------------------------------------------------------------ #
       - name: Create GitHub Release
         if: ${{ github.event.inputs.UPLOAD_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: TWRP-${{ env.DEVICE_NAME }}-${{ github.run_number }}
-          name: TWRP for xsmart CORE_X (Build ${{ github.run_number }})
+          name: "TWRP for xsmart CORE_X — Build #${{ github.run_number }}"
           body: |
-            ## TWRP Recovery for xsmart CORE_X
+            ## TWRP Recovery — xsmart CORE_X (mt6765)
 
-            - **Device:** xsmart CORE_X (mt6765)
-            - **Branch:** ${{ github.event.inputs.MANIFEST_BRANCH }}
-            - **Build:** #${{ github.run_number }}
-            - **Type:** A/B device — flash `boot.img` to both boot slots
+            | Key         | Value                                    |
+            |-------------|------------------------------------------|
+            | Device      | xsmart CORE_X                            |
+            | Chipset     | MediaTek MT6765 (Helio G85)              |
+            | Branch      | ${{ github.event.inputs.MANIFEST_BRANCH }} |
+            | Build       | #${{ github.run_number }}                |
+            | Partition   | A/B — flash **boot.img** to both slots   |
 
-            ### Flashing Instructions
-            ```
+            ### Flash instructions
+            ```sh
             fastboot flash boot_a boot.img
             fastboot flash boot_b boot.img
-            fastboot reboot
+            fastboot reboot recovery
             ```
           files: |
-            twrp/out/target/product/${{ env.DEVICE_NAME }}/boot.img
-            twrp/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
+            ${{ env.TWRP_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/boot.img
+            ${{ env.TWRP_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/recovery.img
           draft: false
           prerelease: true
         env:

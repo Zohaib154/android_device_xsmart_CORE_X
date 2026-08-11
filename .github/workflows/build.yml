@@ -79,25 +79,29 @@ jobs:
         cd work
         source build/envsetup.sh
         
+        # Ensure process exits with failure status if build fails
+        set -o pipefail
+        
         echo "=== Running lunch ==="
         lunch omni_CORE_X-eng || lunch omni_CORE_X-userdebug
         
         echo "=== Starting Compilation ==="
         make bootimage -j$(nproc --all) 2>&1 | tee build.log || make recoveryimage -j$(nproc --all) 2>&1 | tee -a build.log
 
-    - name: Check Build Output
+    - name: Locate Built Images
       if: always()
       run: |
-        echo "=== Locating compiled output files ==="
-        find work/ -name "*.img" -o -name "*.zip" -o -name "build.log"
+        echo "=== Locating compiled output images ==="
+        find work/out/target/product/CORE_X/ -name "*.img" -o -name "*.zip" || true
 
     - name: Upload Recovery Artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ github.event.inputs.recovery_type }}_Recovery_CORE_X
+        name: ${{ github.event.inputs.recovery_type }}_CORE_X
         path: |
-          work/**/*.img
-          work/**/*.zip
+          work/out/target/product/CORE_X/boot.img
+          work/out/target/product/CORE_X/recovery.img
+          work/out/target/product/CORE_X/*.zip
           work/build.log
         if-no-files-found: warn
